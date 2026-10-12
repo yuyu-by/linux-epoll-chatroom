@@ -3,6 +3,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include "net_utils.h"
 int main(void)
 {
     // 创建TCP（网络接口）
@@ -29,7 +30,7 @@ int main(void)
     }
     printf("Connect to server\n");
 
-    char msg[] = "hello TCp";
+    char msg[] = "hello TCp\n";
     ssize_t n_s = send(sockfd, msg, sizeof(msg), 0);
     if (n_s == -1)
     {

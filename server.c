@@ -6,30 +6,35 @@
 #include <arpa/inet.h>
 #include <stdlib.h> //exit
 #include "net_utils.h"
-
-#if 0
-struct sockaddr_in
+#include <fcntl.h>
+#include <sys/epoll.h>
+#include <errno.h>
+typedef struct
 {
-    sa_family_t sin_family;
-    in_port_t sin_port;
-    struct in_addr sin_addr;
-};
-#endif
+    int fd;
+    char buffer[4096];
+    size_t used;
+} Client;
 
 int main()
-{                            // 准备一个服务器地址，
+/*网络socket*/
+{
+
+    // 准备一个服务器地址，
     struct sockaddr_in addr; // struct sockaddr_in addr={0};
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(8888);
     addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    // 创建网络接口，设置为Ipv4，流式套接字
+    // 创建网络通信接口（套接字），设置为Ipv4，流式套接字
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1)
     {
         perror("socket");
         exit(1);
     }
+    // printf("server socket creat success\n");
+
     // 绑定ip地址和端口号
     if ((bind(sockfd, (struct sockaddr *)&addr, sizeof(addr))) == -1)
     {
@@ -37,6 +42,8 @@ int main()
         close(sockfd);
         exit(1);
     }
+    printf("server bind id/port success\n");
+
     // 监听
     if ((listen(sockfd, 5)) == -1)
     {
@@ -44,19 +51,190 @@ int main()
         close(sockfd);
         exit(1);
     }
-    // socklen_t len=sizeof(buf);
-    // accept(sockfd,(struct sockaddr*)&addr,&len);
-    //接收客户端
-    printf("waiting for clinet connect.....\n");
-    int clientfd = accept(sockfd, NULL, NULL); // 不需要获取客户端的地址信息
-
-    if (clientfd == -1)
+    printf("server listen success\n");
+    // 将socket设置成非阻塞模式
+    if ((set_nonblock(sockfd)) == -1)
     {
-        perror("accept");
+        // printf("socked nonblock error\n");
         close(sockfd);
-        exit(1);
+        return 1;
+    }
+    printf("socked nonblock success\n");
+    /*监听epoll*/
+    int epfd = epoll_create1(0);
+    if (epfd == -1)
+    {
+        perror("epoll creat1");
+        return 1;
+    }
+    Client listener = {0};
+    listener.fd = sockfd;
+
+    // 准备监听事件
+    struct epoll_event ev;
+    ev.events = EPOLLIN;
+    ev.data.ptr = &listener;
+    // 把监听的文件和对应的事件放入监听列表
+    if ((epoll_ctl(epfd, EPOLL_CTL_ADD, sockfd, &ev)) == -1)
+    {
+        // printf("set ctl error");
+        perror("epool ctl");
+        close(epfd);
+        close(sockfd);
+        return 1;
     }
 
+    struct epoll_event events[10];
+    while (1)
+    {
+        int e_w = epoll_wait(epfd, events, 10, -1); // 等到出现就绪事件
+        if (e_w == -1)
+        {
+            if (errno == EINTR)
+            {
+                // printf("Recving again....\n");
+                continue;
+            }
+
+            perror("epoll wait");
+            break;
+        }
+
+        for (int i = 0; i < e_w; i++)
+        {
+            Client *client = events[i].data.ptr;
+            int fd = client->fd;
+
+            // 判断是否为新客户端
+            if (fd == sockfd)
+            {
+                while (1)
+                {
+                    printf("正在等待客户端连接... \n");
+                    int clientfd = accept(sockfd, NULL, NULL);
+                    if (clientfd == -1)
+                    {
+                        if (errno == EINTR)
+                        {
+                            continue; // 重新执行循环
+                        }
+                        if (errno == EAGAIN || errno == EWOULDBLOCK)
+                        {
+                            break;
+                        }
+
+                        perror("accept");
+                        break;
+                    }
+                    else if (clientfd >= 0)
+                    {
+                        if ((set_nonblock(clientfd)) == -1) // 将对应clientfd设置成非阻塞模式
+                        {
+                            perror("set clinet nonoblock");
+                            close(clientfd);
+                            continue;
+                        }
+                        printf("客户端已经连接 client:%d\n", clientfd);
+                        // 这个客户端还没有注册到 epoll！
+                        // 这意味着服务器虽然接受了连接，却还不能通过 epoll_wait() 监听这个客户端发送的消息。
+                        Client *client = malloc(sizeof(Client));
+                        if (client == NULL)
+                        {
+                            perror("malloc");
+                            close(clientfd);
+
+                            continue;
+                        }
+                        client->fd = clientfd;
+                        client->used = 0;
+                        struct epoll_event clilent_ev;
+                        clilent_ev.events = EPOLLIN;
+                        // clilent_ev.data.fd = clientfd;
+                        clilent_ev.data.ptr = client;
+                        if ((epoll_ctl(epfd, EPOLL_CTL_ADD, clientfd, &clilent_ev)) == -1)
+                        {
+                            printf("set ctl client error");
+                            perror("epool ctl client");
+                            close(clientfd);
+                            free(client);
+                            continue;
+                        }
+                    }
+                }
+            }
+            // 处理已经连接的客户端
+            else
+            {
+
+                while (1)
+                {
+                    ssize_t ret = recv(fd, client->buffer + client->used, sizeof(client->buffer) - client->used, 0);
+                    if (client->used == sizeof(client->buffer))
+                    {
+                        printf("消息超过字数限制\n");
+                        epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+                        close(fd);
+                        free(client);
+                        break;
+                    }
+
+                    if (ret == 0)
+                    {
+                        printf("对方已离线\n");
+                        // 将这个fd从epoll的关注列表移除
+                        epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL); // 删除注册
+                        close(fd);
+                        free(client); // 关闭客户端 Socket，释放文件描述符。
+                        break;
+                    }
+                    else if (ret == -1)
+                    {
+                        if (errno == EINTR)
+                        {
+
+                            continue;
+                        }
+                        else if (errno == EAGAIN || errno == EWOULDBLOCK) // 暂时没有数据
+                        {
+                            break; // 退出接收循环不等于关闭连接
+                        }
+
+                        perror("recv");
+                        epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+                        close(fd);
+                        break;
+                    }
+                    else
+                    {
+                        client->used += (size_t)ret;
+                        while (1)
+                        {
+                            char *newline = memchr(client->buffer, '\n', client->used);
+                            if (newline == NULL)
+                            {
+                                break;
+                            }
+                            else if (newline != NULL)
+                            {
+                                size_t message_len = newline - client->buffer + 1;
+                                printf("找到一条完整消息 长度为：%zu字节\n", message_len);
+                                fwrite(client->buffer, 1, message_len, stdout);
+                                fflush(stdout);
+                                size_t remaining = client->used - message_len;
+                                memmove(client->buffer, client->buffer + message_len, remaining);
+                                client->used = remaining;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    close(epfd);
+    close(sockfd);
+    return 0;
+}
+#if 0
     while (1)
     {
         // 服务器接受客户端信息
@@ -80,7 +258,7 @@ int main()
             printf("client:%s\n", buffer);
         }
 
-#if 0
+
         int n_s=send(clientfd,reply,sizeof(reply),0);
         if(n_s==-1)
         {
@@ -93,8 +271,8 @@ int main()
         {
             printf("send message%d bytes\n",n_s);
         }
-#endif
-#if 0
+
+
         for (int i = 0; i < rc; i++)
         {
             char ch = buffer[i]; // 取出本次收到的字节
@@ -121,7 +299,23 @@ int main()
                 }
                     
             }
-#endif
+
+        // 发送消息
+        size_t len = strlen(reply);
+        size_t sent = 0;   // sent不能一次性发送所有字节，已经发送的字节
+        while (sent < len) // 因为tcp是字节流协议，需要消息边界处理
+        {
+            ssize_t n_s = send(clientfd, reply + sent, len - sent, 0);
+            if (n_s <= 0)
+            {
+                perror("Send");
+                break;
+            }
+            sent = sent + (size_t)n_s;
+            
+        }
+
+
 
         // 服务器输入回复
         char reply[1024];
@@ -143,26 +337,5 @@ int main()
         {
             printf("server:%s\n", reply);
         }
-
-#if 0
-        // 发送消息
-        size_t len = strlen(reply);
-        size_t sent = 0;   // sent不能一次性发送所有字节，已经发送的字节
-        while (sent < len) // 因为tcp是字节流协议，需要消息边界处理
-        {
-            ssize_t n_s = send(clientfd, reply + sent, len - sent, 0);
-            if (n_s <= 0)
-            {
-                perror("Send");
-                break;
-            }
-            sent = sent + (size_t)n_s;
-            
-        }
-#endif
     }
-
-    close(clientfd);
-    close(sockfd);
-    return 0;
-}
+#endif
