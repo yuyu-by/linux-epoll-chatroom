@@ -178,7 +178,7 @@ Link clt_head=NULL;
 
                     if (ret == 0)
                     {
-                        printf("对方已离线\n");
+                        printf("client%d已离线\n",client->fd);
                         // 将这个fd从epoll的关注列表移除
                         
                         epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL); // 删除注册
@@ -218,22 +218,12 @@ Link clt_head=NULL;
                             else if (newline != NULL)
                             {
                                 size_t message_len = newline - client->buffer + 1;
-                                printf("找到一条完整消息 长度为：%zu字节\n", message_len);
+                                printf("找到一条完整消息长度为%zu字节\n", message_len);
                                 fwrite(client->buffer, 1, message_len, stdout);
                                 fflush(stdout);
                                 
-                                printf("请输入要发送的消息：");
-                                ssize_t n_s = send(fd, client->buffer, message_len, 0);
-                                {
-                                    if (n_s == -1)
-                                    {
-                                        perror("send");
-                                    }
-                                    else
-                                    {
-                                        printf("服务器本次发送了 %zd 字节\n", n_s);
-                                    }
-                                }
+                              
+                                broadcast(clt_head, fd, client->buffer, message_len);
                                 size_t remaining = client->used - message_len;
                                 memmove(client->buffer, client->buffer + message_len, remaining);
                                 client->used = remaining;

@@ -43,7 +43,10 @@ int main(void)
     char message[1024];
     while (1)
     {
+        printf("请输入信息...\n");
+        fflush(stdout);
         int ready = poll(fds, EVENTS, -1);
+        //-1
         if (ready == -1)
         {
             if (errno == EINTR)
@@ -53,8 +56,10 @@ int main(void)
             perror("poll");
             break;
         }
+    
         for (int i = 0; i < EVENTS; i++)
         {
+
             if (!(fds[i].revents & POLLIN))
             {
                 continue;
@@ -62,8 +67,7 @@ int main(void)
 
             if (fds[i].fd == STDIN_FILENO)
             {
-                printf("请输入信息...\n");
-                fflush(stdout);
+
                 if (fgets(message, sizeof(message), stdin) == NULL)
                 {
                     break;
@@ -74,10 +78,10 @@ int main(void)
                     break;
                 }
             }
-            else if(fds[i].fd==sockfd)
+            else if (fds[i].fd == sockfd)
             {
                 char buffer[1024];
-                ssize_t rec = recv(fds[i].fd, buffer, sizeof(buffer) - 1,0);
+                ssize_t rec = recv(fds[i].fd, buffer, sizeof(buffer) - 1, 0);
                 if (rec == 0)
                 {
                     printf("对方关闭了连接\n");
@@ -97,8 +101,9 @@ int main(void)
                     perror("recv");
                     break;
                 }
-                buffer[rec]='\0';
-                printf("server:%s\n", buffer);
+                buffer[rec] = '\0';
+                printf("server%d:%s\n", sockfd, buffer);
+              
                 fflush(stdout);
             }
         }

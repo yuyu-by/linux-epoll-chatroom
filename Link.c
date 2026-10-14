@@ -1,4 +1,21 @@
 #include "Link.h"
+#include <sys/socket.h>
+void broadcast(Link head,int sender_fd,const char *message,size_t len)
+{
+    if(head==NULL)
+    {
+        return;
+    }
+    Link p=head;
+    do{
+        if(p->fd!=sender_fd)
+        {
+send(p->fd,message,len,MSG_NOSIGNAL);
+        }
+        p=p->next;
+    
+    }while(p!=head);
+}
 void insert_client(Link *head, Link new_node)
 {
     if (head == NULL || new_node == NULL)
