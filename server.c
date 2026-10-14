@@ -51,7 +51,7 @@ int main()
         close(sockfd);
         exit(1);
     }
-    printf("server listen success\n");
+
     // 将socket设置成非阻塞模式
     if ((set_nonblock(sockfd)) == -1)
     {
@@ -110,7 +110,7 @@ int main()
             {
                 while (1)
                 {
-                    printf("正在等待客户端连接... \n");
+                
                     int clientfd = accept(sockfd, NULL, NULL);
                     if (clientfd == -1)
                     {
@@ -134,7 +134,7 @@ int main()
                             close(clientfd);
                             continue;
                         }
-                        printf("客户端已经连接 client:%d\n", clientfd);
+                        printf("client:%d已连接\n", clientfd);
                         // 这个客户端还没有注册到 epoll！
                         // 这意味着服务器虽然接受了连接，却还不能通过 epoll_wait() 监听这个客户端发送的消息。
                         Client *client = malloc(sizeof(Client));
@@ -220,6 +220,19 @@ int main()
                                 printf("找到一条完整消息 长度为：%zu字节\n", message_len);
                                 fwrite(client->buffer, 1, message_len, stdout);
                                 fflush(stdout);
+                                
+                                printf("请输入要发送的消息：");
+                                ssize_t n_s = send(fd, client->buffer, message_len, 0);
+                                {
+                                    if (n_s == -1)
+                                    {
+                                        perror("send");
+                                    }
+                                    else
+                                    {
+                                        printf("服务器本次发送了 %zd 字节\n", n_s);
+                                    }
+                                }
                                 size_t remaining = client->used - message_len;
                                 memmove(client->buffer, client->buffer + message_len, remaining);
                                 client->used = remaining;

@@ -4,6 +4,10 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include "net_utils.h"
+#include <string.h>
+#include <poll.h>
+#include <errno.h>
+#define EVENTS 2
 int main(void)
 {
     // 创建TCP（网络接口）
@@ -30,35 +34,76 @@ int main(void)
     }
     printf("Connect to server\n");
 
-    char msg[] = "hello TCp\n";
-    ssize_t n_s = send(sockfd, msg, sizeof(msg), 0);
-    if (n_s == -1)
-    {
-        perror("send");
-        close(sockfd);
-        exit(1);
-    }
-    else
-    {
-        printf("send%ld bytes\n", n_s);
-    }
-    char buffer[1024] = {0};
+    struct pollfd fds[EVENTS];
+    fds[0].fd = STDIN_FILENO;
+    fds[0].events = POLLIN;
+    fds[1].fd = sockfd;
+    fds[1].events = POLLIN;
 
-    ssize_t n = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
+    char message[1024];
+    while (1)
+    {
+        int ready = poll(fds, EVENTS, -1);
+        if (ready == -1)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            perror("poll");
+            break;
+        }
+        for (int i = 0; i < EVENTS; i++)
+        {
+            if (!(fds[i].revents & POLLIN))
+            {
+                continue;
+            }
 
-    if (n > 0)
-    {
-        buffer[n] = '\0';
-        printf("Server says: %s\n", buffer);
+            if (fds[i].fd == STDIN_FILENO)
+            {
+                printf("请输入信息...\n");
+                fflush(stdout);
+                if (fgets(message, sizeof(message), stdin) == NULL)
+                {
+                    break;
+                }
+                if (send_all(sockfd, message, strlen(message)) == -1)
+                {
+                    printf("发送失败\n");
+                    break;
+                }
+            }
+            else if(fds[i].fd==sockfd)
+            {
+                char buffer[1024];
+                ssize_t rec = recv(fds[i].fd, buffer, sizeof(buffer) - 1,0);
+                if (rec == 0)
+                {
+                    printf("对方关闭了连接\n");
+                    close(sockfd);
+                    goto cleanup;
+                }
+                else if (rec == -1)
+                {
+                    if (errno == EINTR)
+                    {
+                        continue;
+                    }
+                    else if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    {
+                        continue;
+                    }
+                    perror("recv");
+                    break;
+                }
+                buffer[rec]='\0';
+                printf("server:%s\n", buffer);
+                fflush(stdout);
+            }
+        }
     }
-    else if (n == 0)
-    {
-        printf("Server closed connection\n");
-    }
-    else
-    {
-        perror("recv");
-    }
+cleanup:
     close(sockfd);
     return 0;
 }
