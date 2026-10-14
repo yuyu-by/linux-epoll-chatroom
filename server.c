@@ -9,16 +9,11 @@
 #include <fcntl.h>
 #include <sys/epoll.h>
 #include <errno.h>
-typedef struct
-{
-    int fd;
-    char buffer[4096];
-    size_t used;
-} Client;
-
+#include"Link.h"
 int main()
 /*网络socket*/
 {
+Link clt_head=NULL;
 
     // 准备一个服务器地址，
     struct sockaddr_in addr; // struct sockaddr_in addr={0};
@@ -71,7 +66,7 @@ int main()
     listener.fd = sockfd;
 
     // 准备监听事件
-    struct epoll_event ev;
+    struct epoll_event ev={0};
     ev.events = EPOLLIN;
     ev.data.ptr = &listener;
     // 把监听的文件和对应的事件放入监听列表
@@ -137,7 +132,7 @@ int main()
                         printf("client:%d已连接\n", clientfd);
                         // 这个客户端还没有注册到 epoll！
                         // 这意味着服务器虽然接受了连接，却还不能通过 epoll_wait() 监听这个客户端发送的消息。
-                        Client *client = malloc(sizeof(Client));
+                       Link client = malloc(sizeof(Client));
                         if (client == NULL)
                         {
                             perror("malloc");
@@ -145,10 +140,12 @@ int main()
 
                             continue;
                         }
-                        client->fd = clientfd;
-                        client->used = 0;
+                        client->fd=clientfd;
+                        client->used=0;
+
                         struct epoll_event clilent_ev;
                         clilent_ev.events = EPOLLIN;
+            
                         // clilent_ev.data.fd = clientfd;
                         clilent_ev.data.ptr = client;
                         if ((epoll_ctl(epfd, EPOLL_CTL_ADD, clientfd, &clilent_ev)) == -1)
@@ -159,6 +156,7 @@ int main()
                             free(client);
                             continue;
                         }
+                       insert_client(&clt_head,client);
                     }
                 }
             }
@@ -182,7 +180,9 @@ int main()
                     {
                         printf("对方已离线\n");
                         // 将这个fd从epoll的关注列表移除
+                        
                         epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL); // 删除注册
+                        remove_client(&clt_head,client);
                         close(fd);
                         free(client); // 关闭客户端 Socket，释放文件描述符。
                         break;
@@ -201,6 +201,7 @@ int main()
 
                         perror("recv");
                         epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+                        remove_client(&clt_head, client);
                         close(fd);
                         break;
                     }
